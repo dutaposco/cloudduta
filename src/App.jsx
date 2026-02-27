@@ -215,6 +215,9 @@ function App() {
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 autoFocus
+                autoComplete="new-password"
+                inputMode="numeric"
+                pattern="[0-9]*"
               />
             </div>
             {pinError && (
@@ -292,7 +295,10 @@ function App() {
           <span className="storage-detail">Supabase Cloud Ready</span>
         </div>
 
-        <button className="btn-logout" onClick={() => setIsLocked(true)}>
+        <button className="btn-logout" onClick={() => {
+          setIsLocked(true);
+          setPin('');
+        }}>
           <Unlock size={18} />
           <span>Lock Session</span>
         </button>
