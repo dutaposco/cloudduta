@@ -13,20 +13,24 @@ import {
   Bell,
   User,
   ChevronRight,
-  Image as ImageIcon,
+  ImageIcon,
   FileText,
   Video,
   Music,
   MoreVertical,
   Upload,
   Loader2,
-  Download
+  Download,
+  Lock,
+  Unlock,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
 import './App.css';
 
 const BUCKET_NAME = 'files';
+const DEFAULT_PIN = '6767';
 
 function App() {
   const [activeTab, setActiveTab] = useState('All Files');
@@ -35,11 +39,18 @@ function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLocked, setIsLocked] = useState(true);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    fetchFiles();
-  }, []);
+    if (!isLocked) {
+      fetchFiles();
+    }
+  }, [isLocked]);
 
   const fetchFiles = async () => {
     try {
@@ -58,15 +69,21 @@ function App() {
       const formattedFiles = data.map(file => {
         const extension = file.name.split('.').pop().toLowerCase();
         let type = 'doc';
-        if (['jpg', 'jpeg', 'png', 'gif', 'svg'].includes(extension)) type = 'image';
-        if (['mp4', 'mov', 'avi'].includes(extension)) type = 'video';
-        if (['mp3', 'wav'].includes(extension)) type = 'music';
+        if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(extension)) type = 'image';
+        if (['mp4', 'mov', 'avi', 'webm'].includes(extension)) type = 'video';
+        if (['mp3', 'wav', 'ogg'].includes(extension)) type = 'music';
+
+        const { data: { publicUrl } } = supabase
+          .storage
+          .from(BUCKET_NAME)
+          .getPublicUrl(file.name);
 
         return {
           id: file.id,
           name: file.name,
           realPath: file.name,
           type,
+          url: publicUrl,
           size: (file.metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
           date: new Date(file.created_at).toLocaleDateString(),
           starred: false
@@ -83,26 +100,29 @@ function App() {
   };
 
   const handleUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const fileList = e.target.files || e.dataTransfer.files;
+    if (!fileList || fileList.length === 0) return;
 
     try {
       setIsUploading(true);
-      const fileName = `${Date.now()}-${file.name}`;
+      const uploadPromises = Array.from(fileList).map(async (file) => {
+        const fileName = `${Date.now()}-${file.name}`;
+        const { error } = await supabase
+          .storage
+          .from(BUCKET_NAME)
+          .upload(fileName, file);
+        if (error) throw error;
+      });
 
-      const { data, error } = await supabase
-        .storage
-        .from(BUCKET_NAME)
-        .upload(fileName, file);
-
-      if (error) throw error;
-
+      await Promise.all(uploadPromises);
       fetchFiles();
     } catch (err) {
       alert(`Upload failed: ${err.message}. Pastikan bucket 'files' sudah dibuat di Supabase Dashboard (Storage) dan diatur ke Public.`);
       console.error('Upload failed:', err);
     } finally {
       setIsUploading(false);
+      setIsDragging(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -137,14 +157,84 @@ function App() {
     }
   };
 
-  const getFileIcon = (type) => {
-    switch (type) {
-      case 'image': return <ImageIcon size={20} className="text-cyan-400" />;
-      case 'video': return <Video size={20} className="text-purple-400" />;
-      case 'music': return <Music size={20} className="text-pink-400" />;
-      default: return <FileText size={20} className="text-indigo-400" />;
+  const handlePinSubmit = (e) => {
+    e.preventDefault();
+    if (pin === DEFAULT_PIN) {
+      setIsLocked(false);
+      setPinError(false);
+    } else {
+      setPinError(true);
+      setPin('');
+      // Shake animation effect could be added here
     }
   };
+
+  const onDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const onDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    handleUpload(e);
+  };
+
+  const getFileIcon = (type, size = 20) => {
+    switch (type) {
+      case 'image': return <ImageIcon size={size} className="text-cyan-400" />;
+      case 'video': return <Video size={size} className="text-purple-400" />;
+      case 'music': return <Music size={size} className="text-pink-400" />;
+      default: return <FileText size={size} className="text-indigo-400" />;
+    }
+  };
+
+  if (isLocked) {
+    return (
+      <div className="pin-container">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="pin-card glass"
+        >
+          <div className="pin-icon-wrapper">
+            <Lock size={32} className="text-accent-primary" />
+          </div>
+          <h2>Authentication Required</h2>
+          <p>Please enter your PIN to access CloudDuta</p>
+
+          <form onSubmit={handlePinSubmit}>
+            <div className={`pin-input-group ${pinError ? 'error' : ''}`}>
+              <input
+                type="password"
+                maxLength="4"
+                placeholder="••••"
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {pinError && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="error-message"
+              >
+                <AlertCircle size={14} />
+                <span>Incorrect PIN. Please try again.</span>
+              </motion.div>
+            )}
+            <button type="submit" className="btn-primary pin-submit-btn">
+              Unlock Storage
+            </button>
+          </form>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
@@ -162,6 +252,7 @@ function App() {
           ref={fileInputRef}
           style={{ display: 'none' }}
           onChange={handleUpload}
+          multiple
         />
 
         <button
@@ -200,6 +291,11 @@ function App() {
           </div>
           <span className="storage-detail">Supabase Cloud Ready</span>
         </div>
+
+        <button className="btn-logout" onClick={() => setIsLocked(true)}>
+          <Unlock size={18} />
+          <span>Lock Session</span>
+        </button>
       </aside>
 
       {/* Main Content */}
@@ -250,10 +346,16 @@ function App() {
             </div>
           </div>
 
-          <div className="upload-dropzone glass" onClick={() => fileInputRef.current.click()}>
-            <Upload size={32} className="text-accent-secondary" />
-            <h3>Drop your files here to upload</h3>
-            <p>Direct upload to Supabase Cloud</p>
+          <div
+            className={`upload-dropzone glass ${isDragging ? 'dragging' : ''}`}
+            onClick={() => fileInputRef.current.click()}
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+          >
+            <Upload size={32} className={isDragging ? 'text-accent-primary animate-bounce' : 'text-accent-secondary'} />
+            <h3>{isDragging ? 'Release to upload' : 'Drop your files here to upload'}</h3>
+            <p>Direct upload to Supabase Cloud (Supports multiple files)</p>
           </div>
 
           {loading ? (
@@ -276,8 +378,14 @@ function App() {
                       transition={{ delay: idx * 0.05 }}
                       className="file-card glass"
                     >
-                      <div className="file-icon-wrapper">
-                        {getFileIcon(file.type)}
+                      <div className="file-icon-wrapper overflow-hidden">
+                        {file.type === 'image' ? (
+                          <img src={file.url} alt={file.name} className="file-preview-image" loading="lazy" />
+                        ) : file.type === 'video' ? (
+                          <video src={file.url} className="file-preview-video" muted />
+                        ) : (
+                          getFileIcon(file.type, viewMode === 'grid' ? 48 : 20)
+                        )}
                       </div>
                       <div className="file-info">
                         <span className="file-name">{file.name.split('-').slice(1).join('-') || file.name}</span>
