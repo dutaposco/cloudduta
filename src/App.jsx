@@ -23,7 +23,8 @@ import {
   Download,
   Lock,
   Unlock,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
@@ -66,29 +67,31 @@ function App() {
 
       if (error) throw error;
 
-      const formattedFiles = data.map(file => {
-        const extension = file.name.split('.').pop().toLowerCase();
-        let type = 'doc';
-        if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(extension)) type = 'image';
-        if (['mp4', 'mov', 'avi', 'webm'].includes(extension)) type = 'video';
-        if (['mp3', 'wav', 'ogg'].includes(extension)) type = 'music';
+      const formattedFiles = data
+        .filter(file => file.metadata) // Only files, not folders
+        .map(file => {
+          const extension = file.name.split('.').pop().toLowerCase();
+          let type = 'doc';
+          if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(extension)) type = 'image';
+          if (['mp4', 'mov', 'avi', 'webm'].includes(extension)) type = 'video';
+          if (['mp3', 'wav', 'ogg'].includes(extension)) type = 'music';
 
-        const { data: { publicUrl } } = supabase
-          .storage
-          .from(BUCKET_NAME)
-          .getPublicUrl(file.name);
+          const { data: { publicUrl } } = supabase
+            .storage
+            .from(BUCKET_NAME)
+            .getPublicUrl(file.name);
 
-        return {
-          id: file.id,
-          name: file.name,
-          realPath: file.name,
-          type,
-          url: publicUrl,
-          size: (file.metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
-          date: new Date(file.created_at).toLocaleDateString(),
-          starred: false
-        };
-      });
+          return {
+            id: file.id,
+            name: file.name,
+            realPath: file.name,
+            type,
+            url: publicUrl,
+            size: (file.metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
+            date: new Date(file.created_at).toLocaleDateString(),
+            starred: false
+          };
+        });
 
       setFiles(formattedFiles);
     } catch (err) {
@@ -127,7 +130,7 @@ function App() {
   };
 
   const deleteFile = async (realPath) => {
-    if (!window.confirm('Hapus file ini?')) return;
+    if (!window.confirm('Hapus file ini secara permanen?')) return;
 
     try {
       const { error } = await supabase
@@ -139,6 +142,7 @@ function App() {
       fetchFiles();
     } catch (err) {
       console.error('Delete failed:', err);
+      alert('Gagal menghapus file: ' + err.message);
     }
   };
 
@@ -269,9 +273,6 @@ function App() {
 
         <nav className="side-nav">
           <NavItem active={activeTab === 'All Files'} onClick={() => setActiveTab('All Files')} icon={<Files size={20} />} label="All Files" />
-          <NavItem active={activeTab === 'Recent'} onClick={() => setActiveTab('Recent')} icon={<Clock size={20} />} label="Recent" />
-          <NavItem active={activeTab === 'Starred'} onClick={() => setActiveTab('Starred')} icon={<Star size={20} />} label="Starred" />
-          <NavItem active={activeTab === 'Trash'} onClick={() => setActiveTab('Trash')} icon={<Trash2 size={20} />} label="Trash" />
         </nav>
 
         <div className="storage-card glass">
@@ -398,10 +399,10 @@ function App() {
                         <span className="file-meta">{file.date} • {file.size}</span>
                       </div>
                       <div className="card-actions">
-                        <button className="btn-icon" onClick={() => downloadFile(file.realPath)}>
+                        <button className="btn-icon" onClick={() => downloadFile(file.realPath)} title="Download">
                           <Download size={16} className="text-accent-secondary" />
                         </button>
-                        <button className="btn-icon dropdown-btn" onClick={() => deleteFile(file.realPath)}>
+                        <button className="btn-icon" onClick={() => deleteFile(file.realPath)} title="Delete">
                           <Trash2 size={16} className="text-red-400" />
                         </button>
                       </div>
