@@ -52,6 +52,7 @@ function App() {
   const [noteContent, setNoteContent] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [editingNotePath, setEditingNotePath] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -154,7 +155,7 @@ function App() {
     }
   };
 
-  const downloadFile = async (realPath) => {
+  const downloadFile = async (realPath, fileName) => {
     try {
       const { data, error } = await supabase
         .storage
@@ -163,15 +164,35 @@ function App() {
 
       if (error) throw error;
 
-      // Handle opening text files in notepad
-      if (realPath.toLowerCase().endsWith('.txt')) {
-        openNoteInNotepad(realPath, data.publicUrl);
-        return;
-      }
+      // Force download by creating a temporary link
+      const link = document.createElement('a');
+      const cleanName = fileName || realPath.split('-').slice(1).join('-') || realPath;
 
-      window.open(data.publicUrl, '_blank');
+      // Add download parameter for Supabase storage
+      link.href = `${data.publicUrl}${data.publicUrl.includes('?') ? '&' : '?'}download=${encodeURIComponent(cleanName)}`;
+      link.download = cleanName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     } catch (err) {
       console.error('Download failed:', err);
+      alert('Gagal mendownload file');
+    }
+  };
+
+  const handleFileClick = (file) => {
+    // Single click logic can be kept simple or removed if double click is preferred
+  };
+
+  const handleDoubleClick = (file) => {
+    if (file.type === 'doc' && file.name.toLowerCase().endsWith('.txt')) {
+      const { data: { publicUrl } } = supabase
+        .storage
+        .from(BUCKET_NAME)
+        .getPublicUrl(file.realPath);
+      openNoteInNotepad(file.realPath, publicUrl);
+    } else {
+      setPreviewFile(file);
     }
   };
 
@@ -465,6 +486,7 @@ function App() {
                       exit={{ opacity: 0, scale: 0.95 }}
                       transition={{ delay: idx * 0.05 }}
                       className="file-card glass"
+                      onDoubleClick={() => handleDoubleClick(file)}
                     >
                       <div className="file-icon-wrapper overflow-hidden">
                         {file.type === 'image' ? (
@@ -476,11 +498,13 @@ function App() {
                         )}
                       </div>
                       <div className="file-info">
-                        <span className="file-name">{file.name.split('-').slice(1).join('-') || file.name}</span>
+                        <span className="file-name" title="Double-click to preview">
+                          {file.name.split('-').slice(1).join('-') || file.name}
+                        </span>
                         <span className="file-meta">{file.date} • {file.size}</span>
                       </div>
                       <div className="card-actions">
-                        <button className="btn-icon" onClick={() => downloadFile(file.realPath)} title="Download">
+                        <button className="btn-icon" onClick={() => downloadFile(file.realPath, file.name.split('-').slice(1).join('-'))} title="Download to PC">
                           <Download size={16} className="text-accent-secondary" />
                         </button>
                         <button className="btn-icon" onClick={() => deleteFile(file.realPath)} title="Delete">
@@ -556,6 +580,69 @@ function App() {
                 <span>{noteContent.length} characters</span>
                 <span>{noteContent.split(/\s+/).filter(Boolean).length} words</span>
               </footer>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* File Preview Modal */}
+      <AnimatePresence>
+        {previewFile && (
+          <motion.div
+            className="preview-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setPreviewFile(null)}
+          >
+            <motion.div
+              className="preview-content glass"
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.8, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <header className="preview-header">
+                <div className="preview-title-info">
+                  {getFileIcon(previewFile.type)}
+                  <div className="preview-title-text">
+                    <h3>{previewFile.name.split('-').slice(1).join('-') || previewFile.name}</h3>
+                    <span>{previewFile.date} • {previewFile.size}</span>
+                  </div>
+                </div>
+                <div className="preview-actions">
+                  <button className="btn-icon" onClick={() => downloadFile(previewFile.realPath, previewFile.name.split('-').slice(1).join('-'))}>
+                    <Download size={20} />
+                  </button>
+                  <button className="btn-icon" onClick={() => setPreviewFile(null)}>
+                    <X size={20} />
+                  </button>
+                </div>
+              </header>
+
+              <div className="preview-body">
+                {previewFile.type === 'image' && (
+                  <img src={previewFile.url} alt={previewFile.name} className="preview-image" />
+                )}
+                {previewFile.type === 'video' && (
+                  <video src={previewFile.url} controls autoPlay className="preview-video" />
+                )}
+                {previewFile.type === 'music' && (
+                  <div className="audio-preview-container">
+                    <Music size={64} className="text-pink-400 mb-4" />
+                    <audio src={previewFile.url} controls autoPlay className="preview-audio" />
+                  </div>
+                )}
+                {previewFile.type === 'doc' && !previewFile.name.toLowerCase().endsWith('.txt') && (
+                  <div className="doc-preview-container">
+                    <FileText size={64} className="text-indigo-400 mb-4" />
+                    <p>Format file ini tidak dapat ditampilkan langsung.</p>
+                    <button className="btn-primary" onClick={() => downloadFile(previewFile.realPath, previewFile.name)}>
+                      Download untuk melihat
+                    </button>
+                  </div>
+                )}
+              </div>
             </motion.div>
           </motion.div>
         )}
