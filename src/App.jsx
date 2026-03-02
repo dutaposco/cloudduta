@@ -24,7 +24,10 @@ import {
   Lock,
   Unlock,
   AlertCircle,
-  RotateCcw
+  RotateCcw,
+  Save,
+  FileEdit,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
@@ -44,6 +47,11 @@ function App() {
   const [pin, setPin] = useState('');
   const [pinError, setPinError] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isNotepadOpen, setIsNotepadOpen] = useState(false);
+  const [noteTitle, setNoteTitle] = useState('');
+  const [noteContent, setNoteContent] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [editingNotePath, setEditingNotePath] = useState(null);
 
   const fileInputRef = useRef(null);
 
@@ -155,10 +163,82 @@ function App() {
 
       if (error) throw error;
 
+      // Handle opening text files in notepad
+      if (realPath.toLowerCase().endsWith('.txt')) {
+        openNoteInNotepad(realPath, data.publicUrl);
+        return;
+      }
+
       window.open(data.publicUrl, '_blank');
     } catch (err) {
       console.error('Download failed:', err);
     }
+  };
+
+  const openNoteInNotepad = async (realPath, url) => {
+    try {
+      setLoading(true);
+      const response = await fetch(url);
+      const text = await response.text();
+
+      const fileName = realPath.split('-').slice(1).join('-') || realPath;
+      setNoteTitle(fileName.replace('.txt', ''));
+      setNoteContent(text);
+      setEditingNotePath(realPath);
+      setIsNotepadOpen(true);
+    } catch (err) {
+      console.error('Failed to open note:', err);
+      alert('Gagal membuka catatan');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!noteTitle.trim()) {
+      alert('Masukkan judul catatan!');
+      return;
+    }
+
+    try {
+      setIsSavingNote(true);
+      const fileName = noteTitle.trim().endsWith('.txt')
+        ? noteTitle.trim()
+        : `${noteTitle.trim()}.txt`;
+
+      // If we're editing, we might want to keep the same prefix or just create a new one
+      // For simplicity, let's always create a new entry if editingNotePath is null
+      // or overwrite if editingNotePath exists
+      const fullFileName = editingNotePath || `${Date.now()}-${fileName}`;
+
+      const blob = new Blob([noteContent], { type: 'text/plain' });
+      const file = new File([blob], fileName, { type: 'text/plain' });
+
+      const { error } = await supabase
+        .storage
+        .from(BUCKET_NAME)
+        .upload(fullFileName, file, { upsert: true });
+
+      if (error) throw error;
+
+      setIsNotepadOpen(false);
+      setNoteTitle('');
+      setNoteContent('');
+      setEditingNotePath(null);
+      fetchFiles();
+    } catch (err) {
+      console.error('Save note failed:', err);
+      alert('Gagal menyimpan catatan: ' + err.message);
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  const createNewNote = () => {
+    setNoteTitle('');
+    setNoteContent('');
+    setEditingNotePath(null);
+    setIsNotepadOpen(true);
   };
 
   const handlePinSubmit = (e) => {
@@ -273,6 +353,7 @@ function App() {
 
         <nav className="side-nav">
           <NavItem active={activeTab === 'All Files'} onClick={() => setActiveTab('All Files')} icon={<Files size={20} />} label="All Files" />
+          <NavItem active={false} onClick={createNewNote} icon={<FileEdit size={20} />} label="New Note" />
         </nav>
 
         <div className="storage-card glass">
@@ -419,6 +500,66 @@ function App() {
           )}
         </section>
       </main>
+
+      {/* Notepad Modal */}
+      <AnimatePresence>
+        {isNotepadOpen && (
+          <motion.div
+            className="notepad-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="notepad-modal glass"
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+            >
+              <header className="notepad-header">
+                <div className="notepad-title-group">
+                  <FileText className="text-accent-primary" size={24} />
+                  <input
+                    type="text"
+                    placeholder="Judul Catatan..."
+                    value={noteTitle}
+                    onChange={(e) => setNoteTitle(e.target.value)}
+                    className="notepad-title-input"
+                  />
+                </div>
+                <div className="notepad-actions">
+                  <button
+                    className="btn-primary"
+                    onClick={handleSaveNote}
+                    disabled={isSavingNote}
+                  >
+                    {isSavingNote ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <Save size={18} />
+                    )}
+                    <span>{isSavingNote ? 'Saving...' : 'Save'}</span>
+                  </button>
+                  <button className="btn-icon" onClick={() => setIsNotepadOpen(false)}>
+                    <X size={20} />
+                  </button>
+                </div>
+              </header>
+              <textarea
+                className="notepad-textarea"
+                placeholder="Mulai mengetik di sini..."
+                value={noteContent}
+                onChange={(e) => setNoteContent(e.target.value)}
+                autoFocus
+              />
+              <footer className="notepad-footer">
+                <span>{noteContent.length} characters</span>
+                <span>{noteContent.split(/\s+/).filter(Boolean).length} words</span>
+              </footer>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
