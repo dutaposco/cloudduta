@@ -214,17 +214,20 @@ function App() {
   };
 
   const deleteFile = async (realPath, type) => {
+    let pathToDelete = realPath;
+    
     if (type === 'folder') {
-      alert('Untuk menghapus folder, masuk ke dalam folder dan gunakan fitur "Delete All", lalu hapus folder tersebut.');
-      return;
+      if (!window.confirm('Hapus folder ini? Pastikan Anda sudah menghapus isinya terlebih dahulu.')) return;
+      pathToDelete = `${realPath}/.keep`;
+    } else {
+      if (!window.confirm('Hapus file ini secara permanen?')) return;
     }
-    if (!window.confirm('Hapus file ini secara permanen?')) return;
 
     try {
       const { error } = await supabase
         .storage
         .from(BUCKET_NAME)
-        .remove([realPath]);
+        .remove([pathToDelete]);
 
       if (error) throw error;
       fetchFiles();
