@@ -186,9 +186,36 @@ function App() {
     }
   };
 
+  const deleteAllInFolder = async () => {
+    if (!currentPath) return;
+    if (files.length === 0) {
+      alert('Folder sudah kosong.');
+      return;
+    }
+    if (!window.confirm('PERINGATAN: Apakah Anda yakin ingin menghapus SEMUA file di dalam folder ini secara permanen?')) return;
+
+    try {
+      setLoading(true);
+      const pathsToDelete = files.map(file => file.realPath);
+      
+      const { error } = await supabase
+        .storage
+        .from(BUCKET_NAME)
+        .remove(pathsToDelete);
+
+      if (error) throw error;
+      
+      fetchFiles();
+    } catch (err) {
+      console.error('Delete all failed:', err);
+      alert('Gagal menghapus semua file: ' + err.message);
+      setLoading(false);
+    }
+  };
+
   const deleteFile = async (realPath, type) => {
     if (type === 'folder') {
-      alert('Untuk menghapus folder, masuk ke dalam folder dan hapus semua file di dalamnya terlebih dahulu, lalu hapus folder tersebut jika ada file khusus.');
+      alert('Untuk menghapus folder, masuk ke dalam folder dan gunakan fitur "Delete All", lalu hapus folder tersebut.');
       return;
     }
     if (!window.confirm('Hapus file ini secara permanen?')) return;
@@ -448,7 +475,17 @@ function App() {
               )}
             </div>
 
-            <div className="view-controls">
+            <div className="view-controls" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {currentPath && files.length > 0 && (
+                <button 
+                  className="btn-icon" 
+                  onClick={deleteAllInFolder} 
+                  title="Hapus Semua Isi Folder"
+                  style={{ color: '#ef4444', border: '1px solid #ef4444' }}
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
               <button
                 className={`btn-icon ${viewMode === 'grid' ? 'active' : ''}`}
                 onClick={() => setViewMode('grid')}
