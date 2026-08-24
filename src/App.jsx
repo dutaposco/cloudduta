@@ -27,7 +27,10 @@ import {
   RotateCcw,
   Save,
   FileEdit,
-  X
+  X,
+  FolderPlus,
+  Folder,
+  Home
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
@@ -43,9 +46,6 @@ function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
-  const [isLocked, setIsLocked] = useState(true);
-  const [pin, setPin] = useState('');
-  const [pinError, setPinError] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isNotepadOpen, setIsNotepadOpen] = useState(false);
   const [noteTitle, setNoteTitle] = useState('');
@@ -53,14 +53,15 @@ function App() {
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [editingNotePath, setEditingNotePath] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
+  const [currentPath, setCurrentPath] = useState('');
+  const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
 
   const fileInputRef = useRef(null);
 
   useEffect(() => {
-    if (!isLocked) {
-      fetchFiles();
-    }
-  }, [isLocked]);
+    fetchFiles();
+  }, [currentPath]);
 
   const fetchFiles = async () => {
     try {
@@ -68,7 +69,7 @@ function App() {
       const { data, error } = await supabase
         .storage
         .from(BUCKET_NAME)
-        .list('', {
+        .list(currentPath, {
           limit: 100,
           offset: 0,
           sortBy: { column: 'created_at', order: 'desc' },
@@ -77,8 +78,22 @@ function App() {
       if (error) throw error;
 
       const formattedFiles = data
-        .filter(file => file.metadata) // Only files, not folders
+        .filter(file => file.name !== '.keep' && file.name !== '.emptyFolderPlaceholder')
         .map(file => {
+          if (!file.metadata) {
+            // Folder
+            return {
+              id: `folder-${file.name}`,
+              name: file.name,
+              realPath: currentPath ? `${currentPath}/${file.name}` : file.name,
+              type: 'folder',
+              url: null,
+              size: '-',
+              date: '-',
+              starred: false
+            };
+          }
+
           const extension = file.name.split('.').pop().toLowerCase();
           let type = 'doc';
           if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(extension)) type = 'image';
@@ -88,12 +103,12 @@ function App() {
           const { data: { publicUrl } } = supabase
             .storage
             .from(BUCKET_NAME)
-            .getPublicUrl(file.name);
+            .getPublicUrl(currentPath ? `${currentPath}/${file.name}` : file.name);
 
           return {
             id: file.id,
             name: file.name,
-            realPath: file.name,
+            realPath: currentPath ? `${currentPath}/${file.name}` : file.name,
             type,
             url: publicUrl,
             size: (file.metadata.size / (1024 * 1024)).toFixed(2) + ' MB',
@@ -101,6 +116,12 @@ function App() {
             starred: false
           };
         });
+
+      formattedFiles.sort((a, b) => {
+        if (a.type === 'folder' && b.type !== 'folder') return -1;
+        if (a.type !== 'folder' && b.type === 'folder') return 1;
+        return 0;
+      });
 
       setFiles(formattedFiles);
     } catch (err) {
@@ -119,10 +140,11 @@ function App() {
       setIsUploading(true);
       const uploadPromises = Array.from(fileList).map(async (file) => {
         const fileName = `${Date.now()}-${file.name}`;
+        const fullPath = currentPath ? `${currentPath}/${fileName}` : fileName;
         const { error } = await supabase
           .storage
           .from(BUCKET_NAME)
-          .upload(fileName, file);
+          .upload(fullPath, file);
         if (error) throw error;
       });
 
@@ -138,7 +160,37 @@ function App() {
     }
   };
 
-  const deleteFile = async (realPath) => {
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return;
+    try {
+      setIsUploading(true);
+      const folderPath = currentPath ? `${currentPath}/${newFolderName.trim()}` : newFolderName.trim();
+      
+      const blob = new Blob([''], { type: 'text/plain' });
+      const file = new File([blob], '.keep', { type: 'text/plain' });
+
+      const { error } = await supabase
+        .storage
+        .from(BUCKET_NAME)
+        .upload(`${folderPath}/.keep`, file);
+
+      if (error) throw error;
+      
+      setIsCreateFolderModalOpen(false);
+      setNewFolderName('');
+      fetchFiles();
+    } catch (err) {
+      alert(`Gagal membuat folder: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const deleteFile = async (realPath, type) => {
+    if (type === 'folder') {
+      alert('Untuk menghapus folder, masuk ke dalam folder dan hapus semua file di dalamnya terlebih dahulu, lalu hapus folder tersebut jika ada file khusus.');
+      return;
+    }
     if (!window.confirm('Hapus file ini secara permanen?')) return;
 
     try {
@@ -185,7 +237,9 @@ function App() {
   };
 
   const handleDoubleClick = (file) => {
-    if (file.type === 'doc' && file.name.toLowerCase().endsWith('.txt')) {
+    if (file.type === 'folder') {
+      setCurrentPath(file.realPath);
+    } else if (file.type === 'doc' && file.name.toLowerCase().endsWith('.txt')) {
       const { data: { publicUrl } } = supabase
         .storage
         .from(BUCKET_NAME)
@@ -230,7 +284,8 @@ function App() {
       // If we're editing, we might want to keep the same prefix or just create a new one
       // For simplicity, let's always create a new entry if editingNotePath is null
       // or overwrite if editingNotePath exists
-      const fullFileName = editingNotePath || `${Date.now()}-${fileName}`;
+      const baseName = `${Date.now()}-${fileName}`;
+      const fullFileName = editingNotePath || (currentPath ? `${currentPath}/${baseName}` : baseName);
 
       const blob = new Blob([noteContent], { type: 'text/plain' });
       const file = new File([blob], fileName, { type: 'text/plain' });
@@ -262,18 +317,6 @@ function App() {
     setIsNotepadOpen(true);
   };
 
-  const handlePinSubmit = (e) => {
-    e.preventDefault();
-    if (pin === DEFAULT_PIN) {
-      setIsLocked(false);
-      setPinError(false);
-    } else {
-      setPinError(true);
-      setPin('');
-      // Shake animation effect could be added here
-    }
-  };
-
   const onDragOver = (e) => {
     e.preventDefault();
     setIsDragging(true);
@@ -290,59 +333,13 @@ function App() {
 
   const getFileIcon = (type, size = 20) => {
     switch (type) {
+      case 'folder': return <Folder size={size} className="text-yellow-400" />;
       case 'image': return <ImageIcon size={size} className="text-cyan-400" />;
       case 'video': return <Video size={size} className="text-purple-400" />;
       case 'music': return <Music size={size} className="text-pink-400" />;
       default: return <FileText size={size} className="text-indigo-400" />;
     }
   };
-
-  if (isLocked) {
-    return (
-      <div className="pin-container">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="pin-card glass"
-        >
-          <div className="pin-icon-wrapper">
-            <Lock size={32} className="text-accent-primary" />
-          </div>
-          <h2>Authentication Required</h2>
-          <p>Please enter your PIN to access CloudDuta</p>
-
-          <form onSubmit={handlePinSubmit}>
-            <div className={`pin-input-group ${pinError ? 'error' : ''}`}>
-              <input
-                type="password"
-                maxLength="4"
-                placeholder="••••"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                autoFocus
-                autoComplete="new-password"
-                inputMode="numeric"
-                pattern="[0-9]*"
-              />
-            </div>
-            {pinError && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="error-message"
-              >
-                <AlertCircle size={14} />
-                <span>Incorrect PIN. Please try again.</span>
-              </motion.div>
-            )}
-            <button type="submit" className="btn-primary pin-submit-btn">
-              Unlock Storage
-            </button>
-          </form>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="app-container">
@@ -361,6 +358,7 @@ function App() {
           style={{ display: 'none' }}
           onChange={handleUpload}
           multiple
+          webkitdirectory="true"
         />
 
         <button
@@ -370,6 +368,16 @@ function App() {
         >
           {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Plus size={20} />}
           <span>{isUploading ? 'Uploading...' : 'Add New'}</span>
+        </button>
+
+        <button
+          className="btn-primary upload-btn"
+          style={{ marginTop: '10px', background: 'rgba(99, 102, 241, 0.2)', border: '1px solid rgba(99, 102, 241, 0.5)' }}
+          onClick={() => setIsCreateFolderModalOpen(true)}
+          disabled={isUploading}
+        >
+          <FolderPlus size={20} />
+          <span>New Folder</span>
         </button>
 
         <nav className="side-nav">
@@ -397,14 +405,6 @@ function App() {
           </div>
           <span className="storage-detail">Supabase Cloud Ready</span>
         </div>
-
-        <button className="btn-logout" onClick={() => {
-          setIsLocked(true);
-          setPin('');
-        }}>
-          <Unlock size={18} />
-          <span>Lock Session</span>
-        </button>
       </aside>
 
       {/* Main Content */}
@@ -421,7 +421,6 @@ function App() {
           </div>
 
           <div className="header-actions">
-            <button className="btn-icon"><Bell size={20} /></button>
             <div className="user-profile glass">
               <div className="avatar">
                 <User size={20} />
@@ -433,10 +432,20 @@ function App() {
 
         <section className="content-section">
           <div className="section-header">
-            <div className="breadcrumb">
-              <span>Cloud Storage</span>
-              <ChevronRight size={14} />
-              <span className="active">{activeTab}</span>
+            <div className="breadcrumb" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span 
+                className="cursor-pointer hover:text-accent-primary" 
+                onClick={() => setCurrentPath('')}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+              >
+                <Home size={16} /> Root
+              </span>
+              {currentPath && (
+                <>
+                  <ChevronRight size={14} />
+                  <span className="active" style={{ color: '#6366f1' }}>{currentPath.split('/').pop()}</span>
+                </>
+              )}
             </div>
 
             <div className="view-controls">
@@ -498,16 +507,18 @@ function App() {
                         )}
                       </div>
                       <div className="file-info">
-                        <span className="file-name" title="Double-click to preview">
-                          {file.name.split('-').slice(1).join('-') || file.name}
+                        <span className="file-name" title="Double-click to open/preview">
+                          {file.type === 'folder' ? file.name : (file.name.split('-').slice(1).join('-') || file.name)}
                         </span>
                         <span className="file-meta">{file.date} • {file.size}</span>
                       </div>
                       <div className="card-actions">
-                        <button className="btn-icon" onClick={() => downloadFile(file.realPath, file.name.split('-').slice(1).join('-'))} title="Download to PC">
-                          <Download size={16} className="text-accent-secondary" />
-                        </button>
-                        <button className="btn-icon" onClick={() => deleteFile(file.realPath)} title="Delete">
+                        {file.type !== 'folder' && (
+                          <button className="btn-icon" onClick={() => downloadFile(file.realPath, file.name.split('-').slice(1).join('-'))} title="Download to PC">
+                            <Download size={16} className="text-accent-secondary" />
+                          </button>
+                        )}
+                        <button className="btn-icon" onClick={() => deleteFile(file.realPath, file.type)} title="Delete">
                           <Trash2 size={16} className="text-red-400" />
                         </button>
                       </div>
@@ -580,6 +591,70 @@ function App() {
                 <span>{noteContent.length} characters</span>
                 <span>{noteContent.split(/\s+/).filter(Boolean).length} words</span>
               </footer>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Folder Modal */}
+      <AnimatePresence>
+        {isCreateFolderModalOpen && (
+          <motion.div
+            className="notepad-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="notepad-modal glass"
+              style={{ maxWidth: '400px', minHeight: 'auto', padding: '0' }}
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+            >
+              <header className="notepad-header">
+                <div className="notepad-title-group" style={{ display: 'flex', alignItems: 'center' }}>
+                  <FolderPlus className="text-accent-primary" size={24} />
+                  <h3 style={{ margin: '0 0 0 10px', color: 'white', fontSize: '18px' }}>Create Folder</h3>
+                </div>
+                <button className="btn-icon" onClick={() => setIsCreateFolderModalOpen(false)}>
+                  <X size={20} />
+                </button>
+              </header>
+              <div style={{ padding: '24px' }}>
+                <input
+                  type="text"
+                  placeholder="Folder Name"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  style={{
+                    width: '100%',
+                    background: 'rgba(0,0,0,0.2)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    color: 'white',
+                    outline: 'none',
+                    marginBottom: '20px'
+                  }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                  <button 
+                    style={{ padding: '10px 16px', borderRadius: '8px', background: 'rgba(255,255,255,0.1)', color: 'white', border: 'none', cursor: 'pointer' }} 
+                    onClick={() => setIsCreateFolderModalOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    style={{ padding: '10px 16px', borderRadius: '8px', background: '#6366f1', color: 'white', border: 'none', cursor: 'pointer', fontWeight: '500' }} 
+                    onClick={handleCreateFolder}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}
