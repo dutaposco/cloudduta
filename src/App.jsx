@@ -470,12 +470,22 @@ function App() {
               >
                 <Home size={16} /> Root
               </span>
-              {currentPath && (
-                <>
-                  <ChevronRight size={14} />
-                  <span className="active" style={{ color: '#6366f1' }}>{currentPath.split('/').pop()}</span>
-                </>
-              )}
+              {currentPath && currentPath.split('/').map((part, index, arr) => {
+                const isLast = index === arr.length - 1;
+                const pathUpToHere = arr.slice(0, index + 1).join('/');
+                return (
+                  <React.Fragment key={pathUpToHere}>
+                    <ChevronRight size={14} />
+                    <span 
+                      className={isLast ? "active" : "cursor-pointer hover:text-accent-primary"} 
+                      style={isLast ? { color: '#6366f1' } : { cursor: 'pointer', transition: 'color 0.2s' }}
+                      onClick={() => !isLast && setCurrentPath(pathUpToHere)}
+                    >
+                      {part}
+                    </span>
+                  </React.Fragment>
+                );
+              })}
             </div>
 
             <div className="view-controls" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
